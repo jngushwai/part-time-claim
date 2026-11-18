@@ -7,7 +7,8 @@ export default function SubmitClaimModal({ isOpen, onClose, onSuccess }) {
   const [form, setForm] = useState({
     date: new Date().toISOString().split('T')[0],
     hours: '',
-    department: 'COMPUTER STUDIES'
+    department: 'COMPUTER STUDIES',
+    status: 'Pending'
   });
   const [loading, setLoading] = useState(false);
   const toast = useToast();
@@ -22,8 +23,8 @@ export default function SubmitClaimModal({ isOpen, onClose, onSuccess }) {
         date: form.date,
         hours: parseFloat(form.hours),
         department: form.department,
-        createdAt: serverTimestamp(),
-        status: 'Pending'
+        status: form.status,
+        createdAt: serverTimestamp()
       });
       toast('Consultation claim submitted successfully to Firestore!');
       if (onSuccess) onSuccess();
@@ -75,6 +76,18 @@ export default function SubmitClaimModal({ isOpen, onClose, onSuccess }) {
             <option value="MECHANICAL ENGINEERING">MECHANICAL ENGINEERING</option>
             <option value="CIVIL ENGINEERING">CIVIL ENGINEERING</option>
             <option value="SCIENCE AND ALLIED STUDIES">SCIENCE AND ALLIED STUDIES</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Status</label>
+          <select
+            className="input"
+            value={form.status}
+            onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+          >
+            <option value="Pending">Pending</option>
+            <option value="Approved">Approved</option>
+            <option value="Rejected">Rejected</option>
           </select>
         </div>
         <div className="flex justify-end gap-2 pt-2 border-t">

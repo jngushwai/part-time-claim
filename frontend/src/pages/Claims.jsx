@@ -295,7 +295,13 @@ export default function Claims() {
                     <td className="table-td font-medium">{c.department}</td>
                     <td className="table-td font-bold">{c.hours} hrs</td>
                     <td className="table-td">
-                      <span className="bg-amber-100 text-amber-800 text-xs px-2 py-1 rounded-full font-semibold">{c.status || 'Pending'}</span>
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                        c.status === 'Approved' ? 'bg-green-100 text-green-800' :
+                        c.status === 'Rejected' ? 'bg-red-100 text-red-800' :
+                        'bg-amber-100 text-amber-800'
+                      }`}>
+                        {c.status || 'Pending'}
+                      </span>
                     </td>
                     <td className="table-td text-gray-400 text-xs">
                       {c.createdAt?.toDate ? c.createdAt.toDate().toLocaleString() : 'Just now'}
