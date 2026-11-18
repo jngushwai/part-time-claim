@@ -1,0 +1,12 @@
+{
+  "name": "dit-claim-system-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "postinstall": "npm run build --prefix frontend && cd backend && npx prisma db push --accept-data-loss && npx prisma generate",
+    "build": "npm run build --prefix frontend",
+    "start": "PORT=3000 node backend/src/index.js",
+    "dev": "PORT=3000 node backend/src/index.js"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "DIT Part-Time Consultation Claims System",
+  "description": "Dar es Salaam Institute of Technology part-time consultation claims and session management system.",
+  "request_or_capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
