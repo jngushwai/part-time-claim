@@ -7,9 +7,9 @@
     "frontend"
   ],
   "scripts": {
-    "build": "prisma generate --schema=backend/prisma/schema.prisma && npm run build --workspace=frontend",
+    "build": "prisma generate --schema=backend/prisma/schema.prisma && npm run build --workspace=dit-claims-frontend",
     "lint": "node --check backend/src/index.js",
-    "start": "prisma generate --schema=backend/prisma/schema.prisma && prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss --skip-generate && PORT=3000 node backend/src/index.js",
-    "dev": "prisma generate --schema=backend/prisma/schema.prisma && prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss --skip-generate && npm run build --workspace=frontend && PORT=3000 node backend/src/index.js"
+    "start": "prisma generate --schema=backend/prisma/schema.prisma && prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss --skip-generate && node backend/src/index.js",
+    "dev": "prisma generate --schema=backend/prisma/schema.prisma && prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss --skip-generate && npm run build --workspace=dit-claims-frontend && PORT=3000 node backend/src/index.js"
   }
 }
