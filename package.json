@@ -2,11 +2,14 @@
   "name": "dit-claim-system-root",
   "version": "1.0.0",
   "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
-    "install:all": "npm install --prefix backend && npm install --prefix frontend",
-    "postinstall": "npm run build --prefix frontend && cd backend && npx prisma db push --accept-data-loss && npx prisma generate",
-    "build": "npm run build --prefix frontend",
-    "start": "PORT=3000 node backend/src/index.js",
-    "dev": "PORT=3000 node backend/src/index.js"
+    "build": "prisma generate --schema=backend/prisma/schema.prisma && npm run build --workspace=frontend",
+    "lint": "node --check backend/src/index.js",
+    "start": "prisma generate --schema=backend/prisma/schema.prisma && prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss --skip-generate && PORT=3000 node backend/src/index.js",
+    "dev": "prisma generate --schema=backend/prisma/schema.prisma && prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss --skip-generate && npm run build --workspace=frontend && PORT=3000 node backend/src/index.js"
   }
 }

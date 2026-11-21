@@ -49,13 +49,6 @@ const prisma = new PrismaClient();
 
 async function seedSuperAdmin() {
   try {
-    try {
-      const { execSync } = require('child_process');
-      execSync('npx prisma db push --accept-data-loss', { cwd: path.join(__dirname, '..'), stdio: 'inherit' });
-    } catch (e) {
-      console.warn('Prisma db push warning:', e.message);
-    }
-
     const adminEmail = 'admin@dit.ac.tz';
     const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
     if (!existing) {
