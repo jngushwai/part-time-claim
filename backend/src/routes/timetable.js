@@ -148,11 +148,20 @@ function detectColumns(headerRow) {
   };
 }
 
-async function populateMonthSessions(userId, yearNum, monthNum, entriesInput) {
+async function populateMonthSessions(userId, yearNum, monthNum, entriesInput, replaceExisting = false) {
   const lecturer = await prisma.lecturer.findUnique({ where: { userId } });
   const degreeRate = lecturer?.degreeRate ?? 15000;
   const odRate = lecturer?.odRate ?? 10000;
   const transportRate = lecturer?.transportRate ?? 10000;
+
+  let replaced = 0;
+  if (replaceExisting) {
+    const pad = String(monthNum).padStart(2, '0');
+    const del = await prisma.session.deleteMany({
+      where: { userId, date: { startsWith: `${yearNum}-${pad}` } }
+    });
+    replaced = del.count;
+  }
 
   const entries = entriesInput || await prisma.timetableEntry.findMany({ where: { userId } });
   const created = [];
@@ -168,10 +177,12 @@ async function populateMonthSessions(userId, yearNum, monthNum, entriesInput) {
     const dates = getDatesInMonth(yearNum, monthNum, dayNum);
 
     for (const date of dates) {
-      const existing = await prisma.session.findFirst({
-        where: { userId, date, moduleId: entry.moduleId, classId: entry.classId, startTime: entry.startTime }
-      });
-      if (existing) { skipped.push(date); continue; }
+      if (!replaceExisting) {
+        const existing = await prisma.session.findFirst({
+          where: { userId, date, moduleId: entry.moduleId, classId: entry.classId, startTime: entry.startTime }
+        });
+        if (existing) { skipped.push(date); continue; }
+      }
 
       const hourlyRate = entry.programme === 'DEGREE' ? degreeRate : odRate;
       const tuition = Math.round(hours * hourlyRate);
@@ -198,8 +209,36 @@ async function populateMonthSessions(userId, yearNum, monthNum, entriesInput) {
     }
   }
 
-  return { created: created.length, skipped: skipped.length };
+  return { created: created.length, skipped: skipped.length, replaced };
 }
+
+// Check whether sessions or timetable entries already exist for a target month/year
+router.get('/existing-check', auth, async (req, res) => {
+  try {
+    const now = new Date();
+    const monthNum = parseInt(req.query.month, 10) || (now.getMonth() + 1);
+    const yearNum = parseInt(req.query.year, 10) || now.getFullYear();
+    const pad = String(monthNum).padStart(2, '0');
+
+    const [sessionCount, timetableCount] = await Promise.all([
+      prisma.session.count({
+        where: { userId: req.user.id, date: { startsWith: `${yearNum}-${pad}` } }
+      }),
+      prisma.timetableEntry.count({
+        where: { userId: req.user.id }
+      })
+    ]);
+
+    res.json({
+      month: monthNum,
+      monthName: MONTHS[monthNum - 1],
+      year: yearNum,
+      sessionCount,
+      timetableCount,
+      hasExistingSessions: sessionCount > 0
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // Get all timetable entries
 router.get('/', auth, async (req, res) => {
@@ -273,6 +312,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
     const targetMonth = parseInt(req.body.month, 10) || (now.getMonth() + 1);
     const targetYear = parseInt(req.body.year, 10) || now.getFullYear();
     const autoPopulate = req.body.autoPopulate !== 'false' && req.body.autoPopulate !== '0';
+    const replaceExisting = req.body.replaceExisting === 'true' || req.body.replaceExisting === true || req.body.replaceExisting === '1';
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(req.file.buffer);
@@ -425,10 +465,12 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
     // 4. Auto-populate Sessions for the selected month & year
     let sessionsCreated = 0;
     let sessionsSkipped = 0;
+    let sessionsReplaced = 0;
     if (autoPopulate && importedEntries.length > 0) {
-      const pop = await populateMonthSessions(req.user.id, targetYear, targetMonth, importedEntries);
+      const pop = await populateMonthSessions(req.user.id, targetYear, targetMonth, importedEntries, replaceExisting);
       sessionsCreated = pop.created;
       sessionsSkipped = pop.skipped;
+      sessionsReplaced = pop.replaced;
     }
 
     res.json({
@@ -439,6 +481,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
       classesTotal: touchedClassIds.size,
       sessionsCreated,
       sessionsSkipped,
+      sessionsReplaced,
       autoPopulated: autoPopulate,
       month: targetMonth,
       monthName: MONTHS[targetMonth - 1],
@@ -501,6 +544,7 @@ router.post('/populate', auth, async (req, res) => {
   try {
     const monthNum = parseInt(req.body.month, 10);
     const yearNum = parseInt(req.body.year, 10);
+    const replaceExisting = req.body.replaceExisting === true || req.body.replaceExisting === 'true';
     if (!monthNum || monthNum < 1 || monthNum > 12 || !yearNum) {
       return res.status(400).json({ error: 'Valid month and year are required' });
     }
@@ -509,12 +553,17 @@ router.post('/populate', auth, async (req, res) => {
       return res.status(400).json({ error: 'No timetable entries found. Please upload your timetable first.' });
     }
 
-    const { created, skipped } = await populateMonthSessions(req.user.id, yearNum, monthNum, entries);
+    const { created, skipped, replaced } = await populateMonthSessions(req.user.id, yearNum, monthNum, entries, replaceExisting);
+
+    const msg = replaceExisting && replaced > 0
+      ? `Replaced ${replaced} existing session(s) and created ${created} new session(s)`
+      : `Created ${created} session(s)${skipped ? `, skipped ${skipped} duplicate(s)` : ''}`;
 
     res.json({
       created,
       skipped,
-      message: `Created ${created} sessions${skipped ? `, skipped ${skipped} duplicates` : ''}`
+      replaced,
+      message: msg
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

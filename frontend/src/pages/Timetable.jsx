@@ -35,6 +35,8 @@ export default function Timetable() {
   const [importSummary, setImportSummary] = useState(null);
   const [populating, setPopulating] = useState(false);
   const [result, setResult] = useState(null);
+  const [replacePrompt, setReplacePrompt] = useState(null);
+  // replacePrompt: { mode: 'import' | 'populate', file?: File, sessionCount: number, monthName: string, year: number }
   const fileRef = useRef();
   const navigate = useNavigate();
   const toast = useToast();
@@ -74,9 +76,7 @@ export default function Timetable() {
     catch { toast('Error clearing', 'error'); }
   };
 
-  const handleImport = async e => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const executeImport = async (file, replaceExisting = false) => {
     setImporting(true);
     setImportSummary(null);
     const fd = new FormData();
@@ -84,6 +84,7 @@ export default function Timetable() {
     fd.append('month', String(month));
     fd.append('year', String(year));
     fd.append('autoPopulate', autoPopulate ? 'true' : 'false');
+    fd.append('replaceExisting', replaceExisting ? 'true' : 'false');
     try {
       const r = await api.post('/timetable/import', fd);
       setImportSummary(r.data);
@@ -92,7 +93,13 @@ export default function Timetable() {
         `${r.data.modulesCreated} new module(s)`,
         `${r.data.classesCreated} new class(es)`
       ];
-      if (r.data.autoPopulated) parts.push(`${r.data.sessionsCreated} session(s) for ${r.data.monthName}`);
+      if (r.data.autoPopulated) {
+        if (r.data.sessionsReplaced > 0) {
+          parts.push(`replaced ${r.data.sessionsReplaced} & created ${r.data.sessionsCreated} session(s)`);
+        } else {
+          parts.push(`${r.data.sessionsCreated} session(s) for ${r.data.monthName}`);
+        }
+      }
       toast(`Auto-filled: ${parts.join(', ')}`);
       loadAll();
     } catch (err) {
@@ -101,6 +108,32 @@ export default function Timetable() {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = '';
     }
+  };
+
+  const handleImport = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (autoPopulate) {
+      try {
+        const check = await api.get('/timetable/existing-check', { params: { month, year } });
+        if (check.data?.hasExistingSessions) {
+          setReplacePrompt({
+            mode: 'import',
+            file,
+            sessionCount: check.data.sessionCount,
+            monthName: check.data.monthName,
+            year: check.data.year
+          });
+          if (fileRef.current) fileRef.current.value = '';
+          return;
+        }
+      } catch {
+        // Proceed with upload if pre-check fails
+      }
+    }
+
+    await executeImport(file, false);
   };
 
   const downloadTemplate = async () => {
@@ -116,14 +149,43 @@ export default function Timetable() {
     } catch { toast('Download failed', 'error'); }
   };
 
-  const populate = async () => {
+  const executePopulate = async (replaceExisting = false) => {
     setPopulating(true); setResult(null);
     try {
-      const r = await api.post('/timetable/populate', { month, year });
+      const r = await api.post('/timetable/populate', { month, year, replaceExisting });
       setResult(r.data);
       toast(r.data.message);
     } catch (err) { toast(err.response?.data?.error || 'Error populating', 'error'); }
     finally { setPopulating(false); }
+  };
+
+  const populate = async () => {
+    try {
+      const check = await api.get('/timetable/existing-check', { params: { month, year } });
+      if (check.data?.hasExistingSessions) {
+        setReplacePrompt({
+          mode: 'populate',
+          sessionCount: check.data.sessionCount,
+          monthName: check.data.monthName,
+          year: check.data.year
+        });
+        return;
+      }
+    } catch {
+      // Proceed if pre-check fails
+    }
+    await executePopulate(false);
+  };
+
+  const handleReplaceChoice = async (replaceExisting) => {
+    const promptData = replacePrompt;
+    setReplacePrompt(null);
+    if (!promptData) return;
+    if (promptData.mode === 'import' && promptData.file) {
+      await executeImport(promptData.file, replaceExisting);
+    } else if (promptData.mode === 'populate') {
+      await executePopulate(replaceExisting);
+    }
   };
 
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
@@ -154,7 +216,7 @@ export default function Timetable() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Step 1: Upload Weekly Timetable</h1>
+          <h1 className="text-2xl font-bold text-gray-800">Weekly Timetable</h1>
           <p className="text-gray-500 text-sm">
             Upload your Excel timetable once — it automatically fills your <strong>Modules</strong>, <strong>Classes</strong>, and monthly <strong>Sessions</strong>.
           </p>
@@ -175,29 +237,27 @@ export default function Timetable() {
         </div>
       </div>
 
-      {/* Organized Workflow Stepper */}
+      {/* Quick Navigation Strip */}
       <div className="card bg-gradient-to-r from-blue-50 to-slate-50 border border-blue-100 p-4">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
           {[
-            { num: '1', title: 'Upload Timetable', desc: 'Upload .xlsx schedule', active: true, to: '/timetable' },
-            { num: '2', title: 'Auto-Fill Modules & Classes', desc: `${modules.length} modules · ${classes.length} classes`, active: modules.length > 0 || classes.length > 0, to: '/modules' },
-            { num: '3', title: 'Review Sessions & PDF', desc: 'Check hours & upload attendance', active: entries.length > 0, to: '/sessions' },
-            { num: '4', title: 'Generate & Submit Claim', desc: 'Submit to HOD or export Excel', active: false, to: '/claims' },
-          ].map(step => (
+            { icon: '🗓️', title: 'Upload Timetable', desc: 'Upload .xlsx schedule', to: '/timetable' },
+            { icon: '📚', title: 'Modules & Classes', desc: `${modules.length} modules · ${classes.length} classes`, to: '/modules' },
+            { icon: '📅', title: 'Sessions & PDF', desc: 'Check hours & upload attendance', to: '/sessions' },
+            { icon: '📋', title: 'Generate & Submit', desc: 'Submit to HOD or export Excel', to: '/claims' },
+          ].map(item => (
             <button
-              key={step.num}
+              key={item.title}
               type="button"
-              onClick={() => navigate(step.to)}
+              onClick={() => navigate(item.to)}
               className="flex items-center gap-3 p-2.5 rounded-xl bg-white/80 hover:bg-white border border-blue-100/80 text-left transition-colors"
             >
-              <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0 ${
-                step.active ? 'bg-primary text-white' : 'bg-gray-200 text-gray-600'
-              }`}>
-                {step.num}
+              <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-base flex-shrink-0">
+                {item.icon}
               </div>
               <div className="min-w-0">
-                <div className="font-bold text-gray-800 truncate">{step.title}</div>
-                <div className="text-gray-500 truncate">{step.desc}</div>
+                <div className="font-bold text-gray-800 truncate">{item.title}</div>
+                <div className="text-gray-500 truncate">{item.desc}</div>
               </div>
             </button>
           ))}
@@ -259,7 +319,9 @@ export default function Timetable() {
                 ✓ Timetable Uploaded & Auto-Filled Successfully
               </h3>
               <p className="text-xs text-green-800">
-                Your modules, classes, weekly timetable, and {importSummary.monthName} {importSummary.year} sessions are ready.
+                {importSummary.sessionsReplaced > 0
+                  ? `Replaced ${importSummary.sessionsReplaced} previous session(s) and generated ${importSummary.sessionsCreated} new session(s) for ${importSummary.monthName} ${importSummary.year}.`
+                  : `Your modules, classes, weekly timetable, and ${importSummary.monthName} ${importSummary.year} sessions are ready.`}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -304,9 +366,11 @@ export default function Timetable() {
               </div>
               <div className="text-xl font-bold text-green-700">
                 {importSummary.sessionsCreated}
-                {importSummary.sessionsSkipped > 0 && (
-                  <span className="text-xs font-normal text-gray-500 ml-1.5">({importSummary.sessionsSkipped} existing)</span>
-                )}
+                {importSummary.sessionsReplaced > 0 ? (
+                  <span className="text-xs font-normal text-amber-600 ml-1.5">(replaced {importSummary.sessionsReplaced})</span>
+                ) : importSummary.sessionsSkipped > 0 ? (
+                  <span className="text-xs font-normal text-gray-500 ml-1.5">({importSummary.sessionsSkipped} kept)</span>
+                ) : null}
               </div>
               <div className="text-xs text-green-700">Open Sessions →</div>
             </button>
@@ -372,6 +436,48 @@ export default function Timetable() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Existing Sessions Detected -> Ask Whether to Replace */}
+      {replacePrompt && (
+        <Modal
+          title="Sessions Already Exist"
+          onClose={() => setReplacePrompt(null)}
+        >
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
+              <div className="font-bold mb-1">
+                ⚠ {replacePrompt.sessionCount} session{replacePrompt.sessionCount === 1 ? '' : 's'} already exist for {replacePrompt.monthName} {replacePrompt.year}.
+              </div>
+              <p className="text-xs text-amber-800">
+                Do you want to replace the existing sessions for {replacePrompt.monthName} {replacePrompt.year} with the new timetable, or keep existing sessions and only add missing ones?
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => handleReplaceChoice(true)}
+                className="btn-danger flex-1"
+              >
+                Replace Existing Sessions
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReplaceChoice(false)}
+                className="btn-primary flex-1"
+              >
+                Keep Existing &amp; Add Missing
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplacePrompt(null)}
+              className="btn-secondary w-full"
+            >
+              Cancel
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Add Sessions Manually Modal */}
@@ -479,7 +585,7 @@ export default function Timetable() {
           <div className="space-y-5">
             <div className="bg-blue-50 rounded-xl p-4 text-sm text-blue-800">
               <div className="font-bold mb-1">What will happen:</div>
-              The system will look at your timetable ({entries.length} entries) and create a session for <strong>every occurrence</strong> of each day in the selected month — skipping any that already exist.
+              The system will look at your timetable ({entries.length} entries) and create a session for <strong>every occurrence</strong> of each day in the selected month. If sessions already exist, you will be asked whether to replace them.
             </div>
 
             <div className="grid grid-cols-2 gap-4">

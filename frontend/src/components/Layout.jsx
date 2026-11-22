@@ -1,46 +1,21 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const teacherNavGroups = [
-  {
-    title: 'Overview',
-    items: [
-      { to: '/', label: 'Dashboard', icon: '📊' },
-    ]
-  },
-  {
-    title: 'Claim Workflow',
-    items: [
-      { to: '/timetable', label: '1. Upload Timetable', icon: '🗓️' },
-      { to: '/modules', label: '2. Modules', icon: '📚' },
-      { to: '/classes', label: '3. Classes', icon: '🏫' },
-      { to: '/sessions', label: '4. Sessions & PDF', icon: '📅' },
-      { to: '/claims', label: '5. Generate & Submit', icon: '📋' },
-    ]
-  },
-  {
-    title: 'Account',
-    items: [
-      { to: '/profile', label: 'My Profile & Rates', icon: '👤' },
-    ]
-  }
+const teacherNav = [
+  { to: '/', label: 'Dashboard', icon: '📊' },
+  { to: '/timetable', label: 'Timetable', icon: '🗓️' },
+  { to: '/modules', label: 'Modules', icon: '📚' },
+  { to: '/classes', label: 'Classes', icon: '🏫' },
+  { to: '/sessions', label: 'Sessions & PDF', icon: '📅' },
+  { to: '/claims', label: 'Generate & Submit', icon: '📋' },
+  { to: '/profile', label: 'My Profile & Rates', icon: '👤' },
 ];
 
-const adminNavGroups = [
-  {
-    title: 'Administration',
-    items: [
-      { to: '/admin', label: 'Admin Overview', icon: '🛡️' },
-      { to: '/admin/teachers', label: 'All Teachers', icon: '👩‍🏫' },
-      { to: '/admin/claims', label: 'Submitted Claims', icon: '📑' },
-    ]
-  },
-  {
-    title: 'Account',
-    items: [
-      { to: '/profile', label: 'Account Settings', icon: '⚙️' },
-    ]
-  }
+const adminNav = [
+  { to: '/admin', label: 'Admin Overview', icon: '🛡️' },
+  { to: '/admin/teachers', label: 'All Teachers', icon: '👩‍🏫' },
+  { to: '/admin/claims', label: 'Submitted Claims', icon: '📑' },
+  { to: '/profile', label: 'Account Settings', icon: '⚙️' },
 ];
 
 export default function Layout({ children }) {
@@ -48,7 +23,7 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
 
   const handleLogout = () => { logout(); navigate('/login'); };
-  const groups = isSuperAdmin ? adminNavGroups : teacherNavGroups;
+  const nav = isSuperAdmin ? adminNav : teacherNav;
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
@@ -66,34 +41,25 @@ export default function Layout({ children }) {
             </span>
           </div>
         </div>
-        <nav className="flex-1 py-3 overflow-y-auto space-y-4">
-          {groups.map(group => (
-            <div key={group.title}>
-              <div className={`px-6 pb-1.5 text-[10px] font-bold uppercase tracking-wider ${
-                isSuperAdmin ? 'text-slate-400' : 'text-blue-200/75'
-              }`}>
-                {group.title}
-              </div>
-              {group.items.map(n => (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.to === '/' || n.to === '/admin'}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-6 py-2.5 text-sm transition-colors ${
-                      isActive
-                        ? 'bg-white/15 text-white font-semibold border-r-4 border-white'
-                        : isSuperAdmin
-                          ? 'text-slate-300 hover:bg-white/10 hover:text-white'
-                          : 'text-blue-100 hover:bg-white/10 hover:text-white'
-                    }`
-                  }
-                >
-                  <span>{n.icon}</span>
-                  <span>{n.label}</span>
-                </NavLink>
-              ))}
-            </div>
+        <nav className="flex-1 py-4 overflow-y-auto">
+          {nav.map(n => (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end={n.to === '/' || n.to === '/admin'}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-6 py-3 text-sm transition-colors ${
+                  isActive
+                    ? 'bg-white/15 text-white font-semibold border-r-4 border-white'
+                    : isSuperAdmin
+                      ? 'text-slate-300 hover:bg-white/10 hover:text-white'
+                      : 'text-blue-100 hover:bg-white/10 hover:text-white'
+                }`
+              }
+            >
+              <span>{n.icon}</span>
+              <span>{n.label}</span>
+            </NavLink>
           ))}
         </nav>
         <div className="px-6 py-4 border-t border-white/10">

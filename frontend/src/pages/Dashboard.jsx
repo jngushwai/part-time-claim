@@ -93,19 +93,18 @@ export default function Dashboard() {
       </div>
 
       <div className="card">
-        <h2 className="font-bold text-gray-700 mb-4">Claim Workflow</h2>
+        <h2 className="font-bold text-gray-700 mb-4">Quick Actions</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { step: 'Step 1', label: 'Upload Timetable', sub: 'Auto-fills Modules, Classes & Sessions', icon: '🗓️', to: '/timetable', color: 'bg-blue-50 text-primary border-blue-100' },
-            { step: 'Step 2', label: 'Sessions & Attendance', sub: 'Verify dates & upload PDF', icon: '📅', to: '/sessions', color: 'bg-purple-50 text-purple-700 border-purple-100' },
-            { step: 'Step 3', label: 'Generate & Submit', sub: 'Submit to HOD or export Excel', icon: '📋', to: '/claims', color: 'bg-green-50 text-accent border-green-100' },
-            { step: 'Setup', label: 'My Profile & Rates', sub: 'Bank details & hourly rates', icon: '👤', to: '/profile', color: 'bg-orange-50 text-orange-700 border-orange-100' },
+            { label: 'Upload Timetable', sub: 'Auto-fills Modules, Classes & Sessions', icon: '🗓️', to: '/timetable', color: 'bg-blue-50 text-primary border-blue-100' },
+            { label: 'Sessions & Attendance', sub: 'Verify dates & upload PDF', icon: '📅', to: '/sessions', color: 'bg-purple-50 text-purple-700 border-purple-100' },
+            { label: 'Generate & Submit', sub: 'Submit to HOD or export Excel', icon: '📋', to: '/claims', color: 'bg-green-50 text-accent border-green-100' },
+            { label: 'My Profile & Rates', sub: 'Bank details & hourly rates', icon: '👤', to: '/profile', color: 'bg-orange-50 text-orange-700 border-orange-100' },
           ].map(a => (
             <button key={a.label} onClick={() => navigate(a.to)}
               className={`flex items-start gap-3 p-4 rounded-xl border text-left transition-all hover:shadow-md ${a.color}`}>
               <span className="text-2xl mt-0.5">{a.icon}</span>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider opacity-75">{a.step}</div>
                 <div className="font-semibold text-sm">{a.label}</div>
                 <div className="text-xs opacity-75 mt-0.5">{a.sub}</div>
               </div>
