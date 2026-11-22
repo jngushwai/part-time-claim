@@ -19,8 +19,9 @@ async function getSessions(userId, month, year) {
 
 router.get('/preview', auth, async (req, res) => {
   try {
-    const { month, year } = req.query;
-    const { lecturer, sessions } = await getSessions(req.user.id, month, year);
+    const monthNum = parseInt(req.query.month, 10);
+    const yearNum = parseInt(req.query.year, 10);
+    const { lecturer, sessions } = await getSessions(req.user.id, monthNum, yearNum);
     const grouped = {};
     for (const s of sessions) {
       const key = `${s.module.code}|${s.class.code}`;
@@ -36,17 +37,32 @@ router.get('/preview', auth, async (req, res) => {
     }));
     const totalTuition = modules.reduce((a, m) => a + m.totalTuition, 0);
     const totalTransport = modules.reduce((a, m) => a + m.totalTransport, 0);
+    const totalHours = sessions.reduce((a, s) => a + s.hours, 0);
+    const submission = await prisma.claimSubmission.findUnique({
+      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+    });
     res.json({
-      lecturer, month: MONTHS[parseInt(month) - 1], year,
-      modules, totalTuition, totalTransport, gross: totalTuition + totalTransport
+      lecturer,
+      month: MONTHS[monthNum - 1],
+      monthNum,
+      year: yearNum,
+      modules,
+      sessionCount: sessions.length,
+      totalHours,
+      totalTuition,
+      totalTransport,
+      gross: totalTuition + totalTransport,
+      submission
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.get('/excel', auth, async (req, res) => {
   try {
-    const { month, year } = req.query;
-    const { lecturer, sessions } = await getSessions(req.user.id, month, year);
+    const { month, year, userId } = req.query;
+    const isAdmin = req.user.email === 'admin@dit.ac.tz';
+    const targetUserId = isAdmin && userId ? parseInt(userId, 10) : req.user.id;
+    const { lecturer, sessions } = await getSessions(targetUserId, month, year);
     const monthName = MONTHS[parseInt(month) - 1];
 
     const wb = new ExcelJS.Workbook();
@@ -248,6 +264,131 @@ router.get('/summary-excel', auth, async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="summary_${year}.xlsx"`);
     await wb.xlsx.write(res);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/submit', auth, async (req, res) => {
+  try {
+    const monthNum = parseInt(req.body.month, 10);
+    const yearNum = parseInt(req.body.year, 10);
+    const hodName = (req.body.hodName || '').trim();
+    const hodEmail = (req.body.hodEmail || '').trim();
+    const notes = (req.body.notes || '').trim();
+
+    if (!monthNum || monthNum < 1 || monthNum > 12 || !yearNum) {
+      return res.status(400).json({ error: 'Valid month and year are required' });
+    }
+
+    const { lecturer, sessions } = await getSessions(req.user.id, monthNum, yearNum);
+    if (!sessions.length) {
+      return res.status(400).json({ error: `No sessions found for ${MONTHS[monthNum - 1]} ${yearNum} to submit` });
+    }
+
+    const existing = await prisma.claimSubmission.findUnique({
+      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+    });
+
+    if (existing && existing.status !== 'Rejected') {
+      return res.status(409).json({
+        error: `This claim for ${MONTHS[monthNum - 1]} ${yearNum} has already been submitted (${existing.status}).`
+      });
+    }
+
+    const totalHours = sessions.reduce((a, s) => a + s.hours, 0);
+    const totalTuition = sessions.reduce((a, s) => a + s.tuition, 0);
+    const totalTransport = sessions.reduce((a, s) => a + s.transport, 0);
+    const gross = totalTuition + totalTransport;
+    const monthName = MONTHS[monthNum - 1];
+
+    const payload = {
+      monthName,
+      lecturerName: lecturer?.name || req.user.name,
+      department: lecturer?.department || 'COMPUTER STUDIES',
+      hodName,
+      hodEmail,
+      sessionCount: sessions.length,
+      totalHours,
+      totalTuition,
+      totalTransport,
+      gross,
+      notes,
+      status: 'Pending',
+      hodRemarks: '',
+      submittedAt: new Date(),
+      reviewedAt: null
+    };
+
+    const submission = existing
+      ? await prisma.claimSubmission.update({
+          where: { id: existing.id },
+          data: payload
+        })
+      : await prisma.claimSubmission.create({
+          data: {
+            userId: req.user.id,
+            month: monthNum,
+            year: yearNum,
+            ...payload
+          }
+        });
+
+    res.status(201).json(submission);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/submissions', auth, async (req, res) => {
+  try {
+    const isReviewer = req.user.email === 'admin@dit.ac.tz';
+    const submissions = await prisma.claimSubmission.findMany({
+      where: isReviewer ? {} : { userId: req.user.id },
+      orderBy: [{ submittedAt: 'desc' }]
+    });
+    res.json({ isReviewer, submissions });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/submissions/:id/status', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { status, hodRemarks } = req.body;
+    const allowed = ['Pending', 'Approved', 'Rejected'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ error: 'Status must be Pending, Approved, or Rejected' });
+    }
+    const existing = await prisma.claimSubmission.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Submission not found' });
+
+    const isReviewer = req.user.email === 'admin@dit.ac.tz';
+    if (!isReviewer && existing.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Not authorized to update this submission' });
+    }
+
+    const updated = await prisma.claimSubmission.update({
+      where: { id },
+      data: {
+        status,
+        hodRemarks: (hodRemarks || '').trim(),
+        reviewedAt: status === 'Pending' ? null : new Date()
+      }
+    });
+    res.json(updated);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/submissions/:id', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = await prisma.claimSubmission.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Submission not found' });
+    const isReviewer = req.user.email === 'admin@dit.ac.tz';
+    if (!isReviewer && existing.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Not authorized to withdraw this submission' });
+    }
+    if (existing.status === 'Approved') {
+      return res.status(400).json({ error: 'Approved claims cannot be withdrawn' });
+    }
+    await prisma.claimSubmission.delete({ where: { id } });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

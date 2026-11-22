@@ -9,12 +9,13 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  name      String
-  createdAt DateTime @default(now())
-  lecturer  Lecturer?
+  id               Int               @id @default(autoincrement())
+  email            String            @unique
+  password         String
+  name             String
+  createdAt        DateTime          @default(now())
+  lecturer         Lecturer?
+  claimSubmissions ClaimSubmission[]
 }
 
 model Lecturer {
@@ -96,5 +97,31 @@ model Session {
   remarks     String   @default("")
   createdAt   DateTime @default(now())
 
+  @@index([userId])
+}
+
+model ClaimSubmission {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  user           User      @relation(fields: [userId], references: [id])
+  month          Int
+  year           Int
+  monthName      String
+  lecturerName   String
+  department     String
+  hodName        String    @default("")
+  hodEmail       String    @default("")
+  sessionCount   Int
+  totalHours     Float
+  totalTuition   Int
+  totalTransport Int
+  gross          Int
+  notes          String    @default("")
+  status         String    @default("Pending")
+  hodRemarks     String    @default("")
+  submittedAt    DateTime  @default(now())
+  reviewedAt     DateTime?
+
+  @@unique([userId, month, year])
   @@index([userId])
 }
