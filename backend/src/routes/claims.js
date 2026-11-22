@@ -2,9 +2,111 @@ const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { PrismaClient } = require('@prisma/client');
 const ExcelJS = require('exceljs');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 const prisma = new PrismaClient();
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const ATTENDANCE_DIR = path.join(__dirname, '../../uploads/attendance');
+
+const pdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (ext !== '.pdf' && file.mimetype !== 'application/pdf') {
+      return cb(new Error('Only PDF files (.pdf) are allowed for attendance sheets'));
+    }
+    cb(null, true);
+  }
+});
+
+function handleOptionalPdfUpload(req, res, next) {
+  const ct = req.headers['content-type'] || '';
+  if (!ct.includes('multipart/form-data')) return next();
+  pdfUpload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Attendance PDF must be 10 MB or smaller'
+        : err.message || 'Invalid PDF upload';
+      return res.status(400).json({ error: msg });
+    }
+    next();
+  });
+}
+
+function isValidPdfBuffer(buf) {
+  return Buffer.isBuffer(buf) && buf.length >= 5 && buf.subarray(0, 5).toString('ascii') === '%PDF-';
+}
+
+function removeFileIfExists(fileName) {
+  if (!fileName) return;
+  const fullPath = path.join(ATTENDANCE_DIR, path.basename(fileName));
+  try {
+    if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+  } catch (e) {
+    console.warn('Could not remove old attendance PDF:', e.message);
+  }
+}
+
+async function saveAttendancePdf(userId, monthNum, yearNum, file) {
+  if (!isValidPdfBuffer(file.buffer)) {
+    const err = new Error('Uploaded file is not a valid PDF document');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  fs.mkdirSync(ATTENDANCE_DIR, { recursive: true });
+
+  const existing = await prisma.monthlyAttendance.findUnique({
+    where: { userId_month_year: { userId, month: monthNum, year: yearNum } }
+  });
+
+  const safeName = `attendance_u${userId}_${yearNum}_${String(monthNum).padStart(2, '0')}_${Date.now()}.pdf`;
+  const destPath = path.join(ATTENDANCE_DIR, safeName);
+  fs.writeFileSync(destPath, file.buffer);
+
+  if (existing?.fileName && existing.fileName !== safeName) {
+    removeFileIfExists(existing.fileName);
+  }
+
+  const originalName = path.basename(file.originalname || `attendance_${MONTHS[monthNum - 1]}_${yearNum}.pdf`);
+
+  const record = await prisma.monthlyAttendance.upsert({
+    where: { userId_month_year: { userId, month: monthNum, year: yearNum } },
+    update: {
+      fileName: safeName,
+      originalName,
+      fileSize: file.size,
+      uploadedAt: new Date()
+    },
+    create: {
+      userId,
+      month: monthNum,
+      year: yearNum,
+      fileName: safeName,
+      originalName,
+      fileSize: file.size
+    }
+  });
+
+  // Sync onto any non-approved ClaimSubmission for this period
+  const submission = await prisma.claimSubmission.findUnique({
+    where: { userId_month_year: { userId, month: monthNum, year: yearNum } }
+  });
+  if (submission && submission.status !== 'Approved') {
+    await prisma.claimSubmission.update({
+      where: { id: submission.id },
+      data: {
+        attendancePdfName: record.originalName,
+        attendancePdfPath: record.fileName
+      }
+    });
+  }
+
+  return record;
+}
 
 async function getSessions(userId, month, year) {
   const lecturer = await prisma.lecturer.findUnique({ where: { userId } });
@@ -21,7 +123,9 @@ router.get('/preview', auth, async (req, res) => {
   try {
     const monthNum = parseInt(req.query.month, 10);
     const yearNum = parseInt(req.query.year, 10);
-    const { lecturer, sessions } = await getSessions(req.user.id, monthNum, yearNum);
+    const isAdmin = auth.isSuperAdmin(req.user);
+    const targetUserId = isAdmin && req.query.userId ? parseInt(req.query.userId, 10) : req.user.id;
+    const { lecturer, sessions } = await getSessions(targetUserId, monthNum, yearNum);
     const grouped = {};
     for (const s of sessions) {
       const key = `${s.module.code}|${s.class.code}`;
@@ -38,9 +142,14 @@ router.get('/preview', auth, async (req, res) => {
     const totalTuition = modules.reduce((a, m) => a + m.totalTuition, 0);
     const totalTransport = modules.reduce((a, m) => a + m.totalTransport, 0);
     const totalHours = sessions.reduce((a, s) => a + s.hours, 0);
-    const submission = await prisma.claimSubmission.findUnique({
-      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
-    });
+    const [submission, attendance] = await Promise.all([
+      prisma.claimSubmission.findUnique({
+        where: { userId_month_year: { userId: targetUserId, month: monthNum, year: yearNum } }
+      }),
+      prisma.monthlyAttendance.findUnique({
+        where: { userId_month_year: { userId: targetUserId, month: monthNum, year: yearNum } }
+      })
+    ]);
     res.json({
       lecturer,
       month: MONTHS[monthNum - 1],
@@ -52,7 +161,8 @@ router.get('/preview', auth, async (req, res) => {
       totalTuition,
       totalTransport,
       gross: totalTuition + totalTransport,
-      submission
+      submission,
+      attendance
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -60,7 +170,7 @@ router.get('/preview', auth, async (req, res) => {
 router.get('/excel', auth, async (req, res) => {
   try {
     const { month, year, userId } = req.query;
-    const isAdmin = req.user.email === 'admin@dit.ac.tz';
+    const isAdmin = auth.isSuperAdmin(req.user);
     const targetUserId = isAdmin && userId ? parseInt(userId, 10) : req.user.id;
     const { lecturer, sessions } = await getSessions(targetUserId, month, year);
     const monthName = MONTHS[parseInt(month) - 1];
@@ -267,7 +377,115 @@ router.get('/summary-excel', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/submit', auth, async (req, res) => {
+router.get('/attendance', auth, async (req, res) => {
+  try {
+    const monthNum = parseInt(req.query.month, 10);
+    const yearNum = parseInt(req.query.year, 10);
+    if (!monthNum || monthNum < 1 || monthNum > 12 || !yearNum) {
+      return res.status(400).json({ error: 'Valid month and year are required' });
+    }
+    const attendance = await prisma.monthlyAttendance.findUnique({
+      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+    });
+    res.json({ attendance });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/attendance', auth, handleOptionalPdfUpload, async (req, res) => {
+  try {
+    const monthNum = parseInt(req.body.month, 10);
+    const yearNum = parseInt(req.body.year, 10);
+    if (!monthNum || monthNum < 1 || monthNum > 12 || !yearNum) {
+      return res.status(400).json({ error: 'Valid month and year are required' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Please choose a PDF file to upload' });
+    }
+    const existingSub = await prisma.claimSubmission.findUnique({
+      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+    });
+    if (existingSub?.status === 'Approved') {
+      return res.status(400).json({ error: 'Cannot modify attendance PDF after the claim has been approved' });
+    }
+    const attendance = await saveAttendancePdf(req.user.id, monthNum, yearNum, req.file);
+    res.status(201).json({ attendance });
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ error: e.message });
+  }
+});
+
+router.get('/attendance/file', auth, async (req, res) => {
+  try {
+    const monthNum = parseInt(req.query.month, 10);
+    const yearNum = parseInt(req.query.year, 10);
+    const isAdmin = auth.isSuperAdmin(req.user);
+    const targetUserId = isAdmin && req.query.userId ? parseInt(req.query.userId, 10) : req.user.id;
+
+    if (!monthNum || monthNum < 1 || monthNum > 12 || !yearNum) {
+      return res.status(400).json({ error: 'Valid month and year are required' });
+    }
+
+    const attendance = await prisma.monthlyAttendance.findUnique({
+      where: { userId_month_year: { userId: targetUserId, month: monthNum, year: yearNum } }
+    });
+    const submission = !attendance
+      ? await prisma.claimSubmission.findUnique({
+          where: { userId_month_year: { userId: targetUserId, month: monthNum, year: yearNum } }
+        })
+      : null;
+
+    const storedName = attendance?.fileName || submission?.attendancePdfPath;
+    const downloadName = attendance?.originalName || submission?.attendancePdfName || `attendance_${MONTHS[monthNum - 1]}_${yearNum}.pdf`;
+
+    if (!storedName) {
+      return res.status(404).json({ error: 'No attendance PDF uploaded for this period' });
+    }
+
+    const fullPath = path.join(ATTENDANCE_DIR, path.basename(storedName));
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: 'Attendance PDF file not found on server' });
+    }
+
+    const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+    const safeDownloadName = downloadName.replace(/["\r\n]/g, '_');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeDownloadName}"`);
+    res.sendFile(fullPath);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/attendance', auth, async (req, res) => {
+  try {
+    const monthNum = parseInt(req.query.month, 10);
+    const yearNum = parseInt(req.query.year, 10);
+    if (!monthNum || monthNum < 1 || monthNum > 12 || !yearNum) {
+      return res.status(400).json({ error: 'Valid month and year are required' });
+    }
+    const existingSub = await prisma.claimSubmission.findUnique({
+      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+    });
+    if (existingSub?.status === 'Approved') {
+      return res.status(400).json({ error: 'Cannot remove attendance PDF after the claim has been approved' });
+    }
+    const existing = await prisma.monthlyAttendance.findUnique({
+      where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+    });
+    if (!existing) return res.status(404).json({ error: 'No attendance PDF found for this period' });
+
+    removeFileIfExists(existing.fileName);
+    await prisma.monthlyAttendance.delete({ where: { id: existing.id } });
+
+    if (existingSub) {
+      await prisma.claimSubmission.update({
+        where: { id: existingSub.id },
+        data: { attendancePdfName: '', attendancePdfPath: '' }
+      });
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/submit', auth, handleOptionalPdfUpload, async (req, res) => {
   try {
     const monthNum = parseInt(req.body.month, 10);
     const yearNum = parseInt(req.body.year, 10);
@@ -294,6 +512,15 @@ router.post('/submit', auth, async (req, res) => {
       });
     }
 
+    let attendanceRecord = null;
+    if (req.file) {
+      attendanceRecord = await saveAttendancePdf(req.user.id, monthNum, yearNum, req.file);
+    } else {
+      attendanceRecord = await prisma.monthlyAttendance.findUnique({
+        where: { userId_month_year: { userId: req.user.id, month: monthNum, year: yearNum } }
+      });
+    }
+
     const totalHours = sessions.reduce((a, s) => a + s.hours, 0);
     const totalTuition = sessions.reduce((a, s) => a + s.tuition, 0);
     const totalTransport = sessions.reduce((a, s) => a + s.transport, 0);
@@ -312,6 +539,8 @@ router.post('/submit', auth, async (req, res) => {
       totalTransport,
       gross,
       notes,
+      attendancePdfName: attendanceRecord?.originalName || '',
+      attendancePdfPath: attendanceRecord?.fileName || '',
       status: 'Pending',
       hodRemarks: '',
       submittedAt: new Date(),
@@ -333,14 +562,17 @@ router.post('/submit', auth, async (req, res) => {
         });
 
     res.status(201).json(submission);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.statusCode || 500).json({ error: e.message }); }
 });
 
 router.get('/submissions', auth, async (req, res) => {
   try {
-    const isReviewer = req.user.email === 'admin@dit.ac.tz';
+    const isReviewer = auth.isSuperAdmin(req.user);
     const submissions = await prisma.claimSubmission.findMany({
       where: isReviewer ? {} : { userId: req.user.id },
+      include: {
+        user: { select: { id: true, name: true, email: true } }
+      },
       orderBy: [{ submittedAt: 'desc' }]
     });
     res.json({ isReviewer, submissions });
@@ -349,6 +581,10 @@ router.get('/submissions', auth, async (req, res) => {
 
 router.patch('/submissions/:id/status', auth, async (req, res) => {
   try {
+    const isReviewer = auth.isSuperAdmin(req.user);
+    if (!isReviewer) {
+      return res.status(403).json({ error: 'Only Super Admin can approve or reject submitted claims' });
+    }
     const id = parseInt(req.params.id, 10);
     const { status, hodRemarks } = req.body;
     const allowed = ['Pending', 'Approved', 'Rejected'];
@@ -357,11 +593,6 @@ router.patch('/submissions/:id/status', auth, async (req, res) => {
     }
     const existing = await prisma.claimSubmission.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Submission not found' });
-
-    const isReviewer = req.user.email === 'admin@dit.ac.tz';
-    if (!isReviewer && existing.userId !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to update this submission' });
-    }
 
     const updated = await prisma.claimSubmission.update({
       where: { id },
@@ -380,7 +611,7 @@ router.delete('/submissions/:id', auth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const existing = await prisma.claimSubmission.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: 'Submission not found' });
-    const isReviewer = req.user.email === 'admin@dit.ac.tz';
+    const isReviewer = auth.isSuperAdmin(req.user);
     if (!isReviewer && existing.userId !== req.user.id) {
       return res.status(403).json({ error: 'Not authorized to withdraw this submission' });
     }

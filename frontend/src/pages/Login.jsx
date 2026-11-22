@@ -18,9 +18,10 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      if (mode === 'login') await login(form.email, form.password);
-      else await register(form.name, form.email, form.password);
-      navigate('/');
+      const res = mode === 'login'
+        ? await login(form.email, form.password)
+        : await register(form.name, form.email, form.password);
+      navigate(res?.user?.role === 'SUPER_ADMIN' ? '/admin' : '/');
     } catch (err) {
       toast(err.response?.data?.error || 'Something went wrong', 'error');
     } finally {
@@ -31,8 +32,8 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
-      await loginWithGoogle();
-      navigate('/');
+      const res = await loginWithGoogle();
+      navigate(res?.user?.role === 'SUPER_ADMIN' ? '/admin' : '/');
     } catch (err) {
       toast(err.message || 'Google sign-in failed', 'error');
     } finally {

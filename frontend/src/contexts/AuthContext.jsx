@@ -5,18 +5,48 @@ import { auth, googleProvider } from '../utils/firebase';
 
 const AuthContext = createContext(null);
 
+function normalizeUser(u) {
+  if (!u) return null;
+  const isAdmin = u.role === 'SUPER_ADMIN' || (u.email || '').toLowerCase() === 'admin@dit.ac.tz';
+  return { ...u, role: isAdmin ? 'SUPER_ADMIN' : (u.role || 'TEACHER') };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('dit_token');
-    const savedUser = localStorage.getItem('dit_user');
-    if (token && savedUser) {
-      setUser(JSON.parse(savedUser));
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-    }
-    setLoading(false);
+    let active = true;
+    const init = async () => {
+      const token = localStorage.getItem('dit_token');
+      const savedUser = localStorage.getItem('dit_user');
+      if (token && savedUser) {
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        try {
+          setUser(normalizeUser(JSON.parse(savedUser)));
+        } catch {
+          // ignore corrupted localStorage entry
+        }
+        try {
+          const res = await api.get('/auth/me');
+          if (active && res.data?.user) {
+            const fresh = normalizeUser(res.data.user);
+            localStorage.setItem('dit_user', JSON.stringify(fresh));
+            setUser(fresh);
+          }
+        } catch (err) {
+          if (active && err.response?.status === 401) {
+            localStorage.removeItem('dit_token');
+            localStorage.removeItem('dit_user');
+            delete api.defaults.headers.common['Authorization'];
+            setUser(null);
+          }
+        }
+      }
+      if (active) setLoading(false);
+    };
+    init();
+    return () => { active = false; };
   }, []);
 
   const tryRequest = async (fn, retries = 2) => {
@@ -33,22 +63,25 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const persistSession = (token, rawUser) => {
+    const normalized = normalizeUser(rawUser);
+    localStorage.setItem('dit_token', token);
+    localStorage.setItem('dit_user', JSON.stringify(normalized));
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    setUser(normalized);
+    return normalized;
+  };
+
   const login = async (email, password) => {
     const res = await tryRequest(() => api.post('/auth/login', { email, password }));
-    localStorage.setItem('dit_token', res.data.token);
-    localStorage.setItem('dit_user', JSON.stringify(res.data.user));
-    api.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
-    setUser(res.data.user);
-    return res.data;
+    const normalized = persistSession(res.data.token, res.data.user);
+    return { ...res.data, user: normalized };
   };
 
   const register = async (name, email, password) => {
     const res = await tryRequest(() => api.post('/auth/register', { name, email, password }));
-    localStorage.setItem('dit_token', res.data.token);
-    localStorage.setItem('dit_user', JSON.stringify(res.data.user));
-    api.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
-    setUser(res.data.user);
-    return res.data;
+    const normalized = persistSession(res.data.token, res.data.user);
+    return { ...res.data, user: normalized };
   };
 
   const loginWithGoogle = async () => {
@@ -58,11 +91,8 @@ export function AuthProvider({ children }) {
       email: firebaseUser.email,
       name: firebaseUser.displayName || firebaseUser.email.split('@')[0]
     });
-    localStorage.setItem('dit_token', res.data.token);
-    localStorage.setItem('dit_user', JSON.stringify(res.data.user));
-    api.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
-    setUser(res.data.user);
-    return res.data;
+    const normalized = persistSession(res.data.token, res.data.user);
+    return { ...res.data, user: normalized };
   };
 
   const logout = () => {
@@ -72,8 +102,10 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+
   return (
-    <AuthContext.Provider value={{ user, login, register, loginWithGoogle, logout, loading }}>
+    <AuthContext.Provider value={{ user, isSuperAdmin, login, register, loginWithGoogle, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

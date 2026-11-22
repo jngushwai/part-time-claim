@@ -9,13 +9,15 @@ datasource db {
 }
 
 model User {
-  id               Int               @id @default(autoincrement())
-  email            String            @unique
-  password         String
-  name             String
-  createdAt        DateTime          @default(now())
-  lecturer         Lecturer?
-  claimSubmissions ClaimSubmission[]
+  id                 Int                 @id @default(autoincrement())
+  email              String              @unique
+  password           String
+  name               String
+  role               String              @default("TEACHER")
+  createdAt          DateTime            @default(now())
+  lecturer           Lecturer?
+  claimSubmissions   ClaimSubmission[]
+  monthlyAttendances MonthlyAttendance[]
 }
 
 model Lecturer {
@@ -116,11 +118,28 @@ model ClaimSubmission {
   totalTuition   Int
   totalTransport Int
   gross          Int
-  notes          String    @default("")
-  status         String    @default("Pending")
-  hodRemarks     String    @default("")
-  submittedAt    DateTime  @default(now())
-  reviewedAt     DateTime?
+  notes             String    @default("")
+  attendancePdfName String    @default("")
+  attendancePdfPath String    @default("")
+  status            String    @default("Pending")
+  hodRemarks        String    @default("")
+  submittedAt       DateTime  @default(now())
+  reviewedAt        DateTime?
+
+  @@unique([userId, month, year])
+  @@index([userId])
+}
+
+model MonthlyAttendance {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id])
+  month        Int
+  year         Int
+  fileName     String
+  originalName String
+  fileSize     Int
+  uploadedAt   DateTime @default(now())
 
   @@unique([userId, month, year])
   @@index([userId])

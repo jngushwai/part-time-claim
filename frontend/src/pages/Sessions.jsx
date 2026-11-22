@@ -2,7 +2,10 @@ import { useEffect, useState, useRef } from 'react';
 import api from '../utils/api';
 import { fmt, MONTHS, currentMonth, currentYear } from '../utils/format';
 import Modal from '../components/ui/Modal';
+import PdfPreviewModal from '../components/PdfPreviewModal';
 import { useToast } from '../components/ui/Toast';
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 const emptyForm = { date: '', moduleId: '', classId: '', programme: 'DEGREE', startTime: '', endTime: '', hasTransport: false, remarks: '' };
 const emptyBulk = { moduleId: '', classId: '', programme: 'DEGREE', hours: '', startTime: '', endTime: '', hasTransport: false, remarks: '' };
@@ -36,12 +39,24 @@ export default function Sessions() {
   const [autoFillSource, setAutoFillSource] = useState(null); // { month, year, patterns }
   const [showAutoFill, setShowAutoFill] = useState(false);
   const [autoFilling, setAutoFilling] = useState(false);
+  const [attendance, setAttendance] = useState(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState(null);
   const fileRef = useRef();
+  const attendanceRef = useRef();
   const toast = useToast();
+
+  const loadAttendance = async () => {
+    try {
+      const r = await api.get('/claims/attendance', { params: { month, year } });
+      setAttendance(r.data.attendance || null);
+    } catch { setAttendance(null); }
+  };
 
   const load = async () => {
     const r = await api.get('/sessions', { params: { month, year } });
     setSessions(r.data);
+    loadAttendance();
     // If this month is empty, find nearest month with sessions (any direction)
     if (r.data.length === 0) {
       try {
@@ -155,6 +170,64 @@ export default function Sessions() {
     });
   };
 
+  const handleAttendanceUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+      toast('Only PDF files (.pdf) are allowed', 'error');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast('Attendance PDF must be 10 MB or smaller', 'error');
+      e.target.value = '';
+      return;
+    }
+    setUploadingPdf(true);
+    try {
+      const fd = new FormData();
+      fd.append('month', String(month));
+      fd.append('year', String(year));
+      fd.append('file', file);
+      const r = await api.post('/claims/attendance', fd);
+      setAttendance(r.data.attendance);
+      toast('Attendance PDF uploaded');
+    } catch (err) {
+      toast(err.response?.data?.error || 'Failed to upload attendance PDF', 'error');
+    } finally {
+      setUploadingPdf(false);
+      if (attendanceRef.current) attendanceRef.current.value = '';
+    }
+  };
+
+  const openAttendancePdf = async () => {
+    try {
+      const token = localStorage.getItem('dit_token');
+      const res = await fetch(`${API_BASE}/claims/attendance/file?month=${month}&year=${year}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to load PDF');
+      const blob = await res.blob();
+      setPdfPreview({
+        url: URL.createObjectURL(blob),
+        name: attendance?.originalName || `attendance_${MONTHS[month - 1]}_${year}.pdf`,
+        subtitle: `${MONTHS[month - 1]} ${year} Attendance Sheet`
+      });
+    } catch {
+      toast('Could not open attendance PDF', 'error');
+    }
+  };
+
+  const removeAttendancePdf = async () => {
+    try {
+      await api.delete('/claims/attendance', { params: { month, year } });
+      setAttendance(null);
+      toast('Attendance PDF removed');
+    } catch (err) {
+      toast(err.response?.data?.error || 'Could not remove attendance PDF', 'error');
+    }
+  };
+
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
   return (
@@ -175,9 +248,30 @@ export default function Sessions() {
             {importing ? 'Importing…' : '⬆ Import Excel'}
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImport} disabled={importing} />
           </label>
+          <label className={`btn-secondary cursor-pointer ${uploadingPdf ? 'opacity-60 pointer-events-none' : ''}`}>
+            {uploadingPdf ? 'Uploading…' : attendance ? '📄 Replace Attendance PDF' : '📄 Upload Attendance PDF'}
+            <input ref={attendanceRef} type="file" accept=".pdf,application/pdf" className="hidden" onChange={handleAttendanceUpload} disabled={uploadingPdf} />
+          </label>
           <button onClick={openBulk} className="btn-primary">+ Add Session</button>
         </div>
       </div>
+
+      {/* Uploaded Attendance PDF banner */}
+      {attendance && (
+        <div className="card p-3.5 bg-blue-50/70 border border-blue-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 text-sm min-w-0">
+            <span className="text-lg">📄</span>
+            <div className="truncate">
+              <span className="font-semibold text-gray-800">Attendance PDF ({MONTHS[month - 1]} {year}):</span>{' '}
+              <span className="text-primary font-medium">{attendance.originalName}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={openAttendancePdf} className="btn-secondary text-xs">👁 View PDF</button>
+            <button type="button" onClick={removeAttendancePdf} className="text-xs text-red-600 hover:underline px-2">Remove</button>
+          </div>
+        </div>
+      )}
 
       {/* Auto-fill banner */}
       {sessions.length === 0 && autoFillSource && (
@@ -464,6 +558,8 @@ export default function Sessions() {
           </div>
         </Modal>
       )}
+
+      <PdfPreviewModal pdf={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );
 }

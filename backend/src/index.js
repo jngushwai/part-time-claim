@@ -11,6 +11,7 @@ const sessionRoutes = require('./routes/sessions');
 const claimRoutes = require('./routes/claims');
 const reportRoutes = require('./routes/reports');
 const timetableRoutes = require('./routes/timetable');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,6 +28,7 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/timetable', timetableRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Serve frontend static files
 const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -57,7 +59,8 @@ async function seedSuperAdmin() {
         data: {
           name: 'Super Administrator',
           email: adminEmail,
-          password: hashed
+          password: hashed,
+          role: 'SUPER_ADMIN'
         }
       });
       await prisma.lecturer.create({
@@ -69,6 +72,12 @@ async function seedSuperAdmin() {
         }
       });
       console.log('Super Admin seeded successfully: admin@dit.ac.tz / AdminPassword123!');
+    } else if (existing.role !== 'SUPER_ADMIN') {
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { role: 'SUPER_ADMIN' }
+      });
+      console.log('Upgraded existing admin@dit.ac.tz account to SUPER_ADMIN role');
     }
   } catch (err) {
     console.error('Error seeding super admin:', err.message);

@@ -1,8 +1,9 @@
-export default function Modal({ title, onClose, children, wide }) {
+export default function Modal({ title, onClose, children, wide, maxWidth }) {
+  const widthClass = maxWidth || (wide ? 'max-w-3xl' : 'max-w-lg');
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4" onClick={onClose}>
       <div
-        className={`bg-white rounded-2xl shadow-2xl ${wide ? 'max-w-3xl' : 'max-w-lg'} w-full max-h-[90vh] overflow-y-auto`}
+        className={`bg-white rounded-2xl shadow-2xl ${widthClass} w-full max-h-[90vh] overflow-y-auto`}
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
