@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { MONTHS, currentMonth, currentYear } from '../utils/format';
 import Modal from '../components/ui/Modal';
@@ -29,18 +30,23 @@ export default function Timetable() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [month, setMonth] = useState(currentMonth);
   const [year, setYear] = useState(currentYear);
+  const [autoPopulate, setAutoPopulate] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState(null);
   const [populating, setPopulating] = useState(false);
   const [result, setResult] = useState(null);
   const fileRef = useRef();
+  const navigate = useNavigate();
   const toast = useToast();
 
-  const load = () => api.get('/timetable').then(r => setEntries(r.data)).catch(console.error);
+  const loadAll = () => {
+    api.get('/timetable').then(r => setEntries(r.data)).catch(console.error);
+    api.get('/modules').then(r => setModules(r.data)).catch(console.error);
+    api.get('/classes').then(r => setClasses(r.data)).catch(console.error);
+  };
 
   useEffect(() => {
-    load();
-    api.get('/modules').then(r => setModules(r.data));
-    api.get('/classes').then(r => setClasses(r.data));
+    loadAll();
   }, []);
 
   const set = k => e => setForm(p => ({ ...p, [k]: e.type === 'checkbox' ? e.target.checked : e.target.value }));
@@ -59,26 +65,42 @@ export default function Timetable() {
   };
 
   const deleteEntry = async id => {
-    try { await api.delete(`/timetable/${id}`); toast('Entry removed'); load(); }
+    try { await api.delete(`/timetable/${id}`); toast('Entry removed'); loadAll(); }
     catch { toast('Error deleting', 'error'); }
   };
 
   const clearAll = async () => {
-    try { await api.delete('/timetable'); toast('Timetable cleared'); setShowClearConfirm(false); load(); }
+    try { await api.delete('/timetable'); toast('Timetable cleared'); setShowClearConfirm(false); setImportSummary(null); loadAll(); }
     catch { toast('Error clearing', 'error'); }
   };
 
   const handleImport = async e => {
-    const file = e.target.files[0]; if (!file) return;
+    const file = e.target.files[0];
+    if (!file) return;
     setImporting(true);
-    const fd = new FormData(); fd.append('file', file);
+    setImportSummary(null);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('month', String(month));
+    fd.append('year', String(year));
+    fd.append('autoPopulate', autoPopulate ? 'true' : 'false');
     try {
       const r = await api.post('/timetable/import', fd);
-      toast(`Imported ${r.data.imported} timetable entries${r.data.errors.length ? ` (${r.data.errors.length} errors)` : ''}`);
-      if (r.data.errors.length) console.warn(r.data.errors);
-      load();
-    } catch (err) { toast(err.response?.data?.error || 'Import failed', 'error'); }
-    finally { setImporting(false); fileRef.current.value = ''; }
+      setImportSummary(r.data);
+      const parts = [
+        `${r.data.imported} slot(s)`,
+        `${r.data.modulesCreated} new module(s)`,
+        `${r.data.classesCreated} new class(es)`
+      ];
+      if (r.data.autoPopulated) parts.push(`${r.data.sessionsCreated} session(s) for ${r.data.monthName}`);
+      toast(`Auto-filled: ${parts.join(', ')}`);
+      loadAll();
+    } catch (err) {
+      toast(err.response?.data?.error || 'Import failed', 'error');
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
   };
 
   const downloadTemplate = async () => {
@@ -105,7 +127,6 @@ export default function Timetable() {
   };
 
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
-
   const calDays = getDaysInMonth(year, month);
   const firstDow = calDays[0]?.dow ?? 0;
 
@@ -125,7 +146,6 @@ export default function Timetable() {
     });
   };
 
-  // Group entries by day
   const byDay = {};
   DAYS.forEach(d => { byDay[d] = entries.filter(e => e.dayOfWeek === d); });
 
@@ -134,26 +154,20 @@ export default function Timetable() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Weekly Timetable</h1>
+          <h1 className="text-2xl font-bold text-gray-800">Step 1: Upload Weekly Timetable</h1>
           <p className="text-gray-500 text-sm">
-            {entries.length === 0
-              ? 'No timetable yet — import your Excel timetable or add entries manually'
-              : `${entries.length} entries across the week`}
+            Upload your Excel timetable once — it automatically fills your <strong>Modules</strong>, <strong>Classes</strong>, and monthly <strong>Sessions</strong>.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={downloadTemplate} className="btn-secondary">⬇ Download Template</button>
-          <label className={`btn-secondary cursor-pointer ${importing ? 'opacity-60' : ''}`}>
-            {importing ? 'Importing…' : '⬆ Import Excel'}
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImport} disabled={importing} />
-          </label>
-          <button onClick={() => setShowAdd(true)} className="btn-secondary">+ Add Entry</button>
+          <button onClick={() => setShowAdd(true)} className="btn-secondary">+ Add Sessions Manually</button>
           {entries.length > 0 && (
             <>
-              <button onClick={() => { setResult(null); setShowPopulate(true); }} className="btn-primary">
-                📅 Populate Month
+              <button onClick={() => { setResult(null); setShowPopulate(true); }} className="btn-secondary">
+                📅 Populate Another Month
               </button>
-              <button onClick={() => setShowClearConfirm(true)} className="text-red-400 hover:text-red-600 text-sm px-3 py-2 rounded-lg hover:bg-red-50 border border-red-200 transition-colors">
+              <button onClick={() => setShowClearConfirm(true)} className="text-red-500 hover:text-red-700 text-sm px-3 py-2 rounded-lg hover:bg-red-50 border border-red-200 transition-colors">
                 Clear All
               </button>
             </>
@@ -161,31 +175,170 @@ export default function Timetable() {
         </div>
       </div>
 
-      {/* How it works banner */}
-      {entries.length === 0 && (
-        <div className="card bg-blue-50 border-blue-100">
-          <h3 className="font-bold text-primary mb-3">How Timetable Import Works</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-            {[
-              { step: '1', icon: '⬇', title: 'Download Template', desc: 'Get the Excel template with your modules and classes pre-listed' },
-              { step: '2', icon: '✏️', title: 'Fill Your Timetable', desc: 'Add each class: day, module, class, time. One row per teaching slot per week.' },
-              { step: '3', icon: '📅', title: 'Populate Any Month', desc: 'Click "Populate Month", select month/year — all sessions auto-created for every occurrence of that day!' },
-            ].map(s => (
-              <div key={s.step} className="flex gap-3">
-                <div className="w-8 h-8 bg-primary text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">{s.step}</div>
-                <div>
-                  <div className="font-semibold text-gray-700">{s.icon} {s.title}</div>
-                  <div className="text-gray-500 text-xs mt-0.5">{s.desc}</div>
-                </div>
+      {/* Organized Workflow Stepper */}
+      <div className="card bg-gradient-to-r from-blue-50 to-slate-50 border border-blue-100 p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+          {[
+            { num: '1', title: 'Upload Timetable', desc: 'Upload .xlsx schedule', active: true, to: '/timetable' },
+            { num: '2', title: 'Auto-Fill Modules & Classes', desc: `${modules.length} modules · ${classes.length} classes`, active: modules.length > 0 || classes.length > 0, to: '/modules' },
+            { num: '3', title: 'Review Sessions & PDF', desc: 'Check hours & upload attendance', active: entries.length > 0, to: '/sessions' },
+            { num: '4', title: 'Generate & Submit Claim', desc: 'Submit to HOD or export Excel', active: false, to: '/claims' },
+          ].map(step => (
+            <button
+              key={step.num}
+              type="button"
+              onClick={() => navigate(step.to)}
+              className="flex items-center gap-3 p-2.5 rounded-xl bg-white/80 hover:bg-white border border-blue-100/80 text-left transition-colors"
+            >
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0 ${
+                step.active ? 'bg-primary text-white' : 'bg-gray-200 text-gray-600'
+              }`}>
+                {step.num}
               </div>
-            ))}
+              <div className="min-w-0">
+                <div className="font-bold text-gray-800 truncate">{step.title}</div>
+                <div className="text-gray-500 truncate">{step.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Primary Upload & Auto-Fill Card */}
+      <div className="card border-2 border-dashed border-primary/30 bg-white p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-base font-bold text-gray-800">Upload Excel Timetable & Auto-Fill Everything</h2>
+            <p className="text-xs text-gray-500">
+              No need to pre-create Modules or Classes. Any new module or class in your Excel sheet is created automatically, and sessions are generated for the selected month.
+            </p>
           </div>
+          <label className={`btn-primary cursor-pointer px-5 py-3 text-sm font-semibold shadow-sm ${importing ? 'opacity-60 pointer-events-none' : ''}`}>
+            {importing ? 'Uploading & Auto-Filling…' : '⬆ Upload Timetable (.xlsx)'}
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImport} disabled={importing} />
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100 text-sm">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autoPopulate}
+              onChange={e => setAutoPopulate(e.target.checked)}
+              className="w-4 h-4 accent-primary"
+            />
+            <span className="font-medium text-gray-700">Auto-generate monthly sessions on upload for:</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              className="input w-36 py-1.5 text-sm"
+              value={month}
+              onChange={e => setMonth(+e.target.value)}
+              disabled={!autoPopulate}
+            >
+              {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <select
+              className="input w-24 py-1.5 text-sm"
+              value={year}
+              onChange={e => setYear(+e.target.value)}
+              disabled={!autoPopulate}
+            >
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Auto-Fill Import Summary Banner */}
+      {importSummary && (
+        <div className="card bg-green-50 border border-green-200 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="font-bold text-green-900 text-base">
+                ✓ Timetable Uploaded & Auto-Filled Successfully
+              </h3>
+              <p className="text-xs text-green-800">
+                Your modules, classes, weekly timetable, and {importSummary.monthName} {importSummary.year} sessions are ready.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => navigate('/sessions')} className="btn-primary text-xs">
+                Review Sessions ({importSummary.sessionsCreated}) →
+              </button>
+              <button onClick={() => navigate('/claims')} className="btn-accent text-xs">
+                Generate Claim →
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-white rounded-xl p-3 border border-green-100">
+              <div className="text-[11px] font-semibold uppercase text-gray-400">Timetable Slots</div>
+              <div className="text-xl font-bold text-gray-800">{importSummary.imported}</div>
+              <div className="text-xs text-gray-500">Weekly teaching slots</div>
+            </div>
+            <button onClick={() => navigate('/modules')} className="bg-white rounded-xl p-3 border border-green-100 text-left hover:border-primary transition-colors">
+              <div className="text-[11px] font-semibold uppercase text-gray-400">Modules Auto-Filled</div>
+              <div className="text-xl font-bold text-primary">
+                {importSummary.modulesTotal}
+                {importSummary.modulesCreated > 0 && (
+                  <span className="text-xs font-semibold text-green-600 ml-1.5">+{importSummary.modulesCreated} new</span>
+                )}
+              </div>
+              <div className="text-xs text-primary">View Modules →</div>
+            </button>
+            <button onClick={() => navigate('/classes')} className="bg-white rounded-xl p-3 border border-green-100 text-left hover:border-primary transition-colors">
+              <div className="text-[11px] font-semibold uppercase text-gray-400">Classes Auto-Filled</div>
+              <div className="text-xl font-bold text-primary">
+                {importSummary.classesTotal}
+                {importSummary.classesCreated > 0 && (
+                  <span className="text-xs font-semibold text-green-600 ml-1.5">+{importSummary.classesCreated} new</span>
+                )}
+              </div>
+              <div className="text-xs text-primary">View Classes →</div>
+            </button>
+            <button onClick={() => navigate('/sessions')} className="bg-white rounded-xl p-3 border border-green-100 text-left hover:border-primary transition-colors">
+              <div className="text-[11px] font-semibold uppercase text-gray-400">
+                Sessions ({importSummary.monthName})
+              </div>
+              <div className="text-xl font-bold text-green-700">
+                {importSummary.sessionsCreated}
+                {importSummary.sessionsSkipped > 0 && (
+                  <span className="text-xs font-normal text-gray-500 ml-1.5">({importSummary.sessionsSkipped} existing)</span>
+                )}
+              </div>
+              <div className="text-xs text-green-700">Open Sessions →</div>
+            </button>
+          </div>
+
+          {importSummary.errors?.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+              <div className="font-bold">Skipped Rows ({importSummary.errors.length}):</div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {importSummary.errors.map((err, idx) => <li key={idx}>{err}</li>)}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
       {/* Timetable grid by day */}
       {entries.length > 0 && (
         <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-gray-500">
+              Current Weekly Timetable ({entries.length} {entries.length === 1 ? 'slot' : 'slots'})
+            </h2>
+            <div className="flex gap-2">
+              <button onClick={() => navigate('/modules')} className="text-xs font-medium text-primary hover:underline">Modules ({modules.length})</button>
+              <span className="text-gray-300">·</span>
+              <button onClick={() => navigate('/classes')} className="text-xs font-medium text-primary hover:underline">Classes ({classes.length})</button>
+              <span className="text-gray-300">·</span>
+              <button onClick={() => navigate('/sessions')} className="text-xs font-medium text-primary hover:underline">View Sessions →</button>
+            </div>
+          </div>
+
           {DAYS.map(day => byDay[day].length > 0 && (
             <div key={day} className="card p-0 overflow-hidden">
               <div className="bg-primary px-4 py-2 flex items-center gap-2">
@@ -221,11 +374,10 @@ export default function Timetable() {
         </div>
       )}
 
-      {/* Add Entry Modal */}
+      {/* Add Sessions Manually Modal */}
       {showAdd && (
-        <Modal title="Add Sessions" onClose={() => { setShowAdd(false); setSelectedDates(new Set()); }}>
+        <Modal title="Add Sessions Manually" onClose={() => { setShowAdd(false); setSelectedDates(new Set()); }}>
           <form onSubmit={saveEntry} className="space-y-5">
-            {/* Month selector */}
             <div className="flex gap-2">
               <select className="input flex-1" value={month} onChange={e => { setMonth(+e.target.value); setSelectedDates(new Set()); }}>
                 {MONTHS.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
@@ -235,7 +387,6 @@ export default function Timetable() {
               </select>
             </div>
 
-            {/* Calendar */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="label mb-0">Select Teaching Dates</label>
@@ -262,7 +413,6 @@ export default function Timetable() {
               {selectedDates.size > 0 && <p className="text-xs text-primary mt-1 font-medium">{selectedDates.size} date(s) selected</p>}
             </div>
 
-            {/* Module / Class / Programme / Hours */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Module</label>
@@ -323,9 +473,9 @@ export default function Timetable() {
         </Modal>
       )}
 
-      {/* Populate Month Modal */}
+      {/* Populate Another Month Modal */}
       {showPopulate && (
-        <Modal title="Populate Sessions from Timetable" onClose={() => setShowPopulate(false)}>
+        <Modal title="Populate Sessions for Another Month" onClose={() => setShowPopulate(false)}>
           <div className="space-y-5">
             <div className="bg-blue-50 rounded-xl p-4 text-sm text-blue-800">
               <div className="font-bold mb-1">What will happen:</div>
@@ -350,7 +500,11 @@ export default function Timetable() {
             {result && (
               <div className={`rounded-xl p-4 text-sm ${result.created > 0 ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-yellow-50 text-yellow-800 border border-yellow-200'}`}>
                 <div className="font-bold text-base mb-1">{result.created > 0 ? '✓' : '⚠'} {result.message}</div>
-                {result.created > 0 && <div>Go to <strong>Sessions</strong> to view all generated sessions.</div>}
+                {result.created > 0 && (
+                  <button onClick={() => { setShowPopulate(false); navigate('/sessions'); }} className="text-xs font-semibold underline mt-1">
+                    Go to Sessions →
+                  </button>
+                )}
               </div>
             )}
 
@@ -367,7 +521,7 @@ export default function Timetable() {
       {/* Clear Confirm Modal */}
       {showClearConfirm && (
         <Modal title="Clear Timetable" onClose={() => setShowClearConfirm(false)}>
-          <p className="text-gray-600 mb-6">This will remove all {entries.length} timetable entries. Your existing sessions are not affected.</p>
+          <p className="text-gray-600 mb-6">This will remove all {entries.length} timetable entries. Your auto-filled modules, classes, and existing sessions will not be deleted.</p>
           <div className="flex gap-3">
             <button onClick={clearAll} className="btn-danger flex-1">Yes, Clear All</button>
             <button onClick={() => setShowClearConfirm(false)} className="btn-secondary flex-1">Cancel</button>

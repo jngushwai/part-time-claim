@@ -38,7 +38,7 @@ export default function Dashboard() {
           <p className="text-gray-500 text-sm">{MONTHS[currentMonth - 1]} {currentYear} Overview</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => navigate('/sessions')} className="btn-primary">+ Add Session</button>
+          <button onClick={() => navigate('/timetable')} className="btn-primary">⬆ Upload Timetable</button>
           <button onClick={() => navigate('/claims')} className="btn-accent">Generate Claim</button>
         </div>
       </div>
@@ -64,7 +64,7 @@ export default function Dashboard() {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet — add your first session</div>
+            <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet — upload your timetable to auto-fill sessions</div>
           )}
         </div>
 
@@ -72,9 +72,9 @@ export default function Dashboard() {
           <h2 className="font-bold text-gray-700 mb-4">Recent Sessions</h2>
           {recentSessions.length === 0 ? (
             <div className="text-center py-8 text-gray-300">
-              <div className="text-4xl mb-2">📅</div>
+              <div className="text-4xl mb-2">🗓️</div>
               <p className="text-sm">No sessions yet</p>
-              <button onClick={() => navigate('/sessions')} className="btn-primary mt-3 text-xs">Add First Session</button>
+              <button onClick={() => navigate('/timetable')} className="btn-primary mt-3 text-xs">Upload Timetable to Auto-Fill</button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -93,18 +93,22 @@ export default function Dashboard() {
       </div>
 
       <div className="card">
-        <h2 className="font-bold text-gray-700 mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <h2 className="font-bold text-gray-700 mb-4">Claim Workflow</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Add Session', icon: '➕', to: '/sessions', color: 'bg-blue-50 text-primary border-blue-100' },
-            { label: 'Generate Claim', icon: '📋', to: '/claims', color: 'bg-green-50 text-accent border-green-100' },
-            { label: 'Manage Modules', icon: '📚', to: '/modules', color: 'bg-purple-50 text-purple-600 border-purple-100' },
-            { label: 'My Profile', icon: '👤', to: '/profile', color: 'bg-orange-50 text-orange-600 border-orange-100' },
+            { step: 'Step 1', label: 'Upload Timetable', sub: 'Auto-fills Modules, Classes & Sessions', icon: '🗓️', to: '/timetable', color: 'bg-blue-50 text-primary border-blue-100' },
+            { step: 'Step 2', label: 'Sessions & Attendance', sub: 'Verify dates & upload PDF', icon: '📅', to: '/sessions', color: 'bg-purple-50 text-purple-700 border-purple-100' },
+            { step: 'Step 3', label: 'Generate & Submit', sub: 'Submit to HOD or export Excel', icon: '📋', to: '/claims', color: 'bg-green-50 text-accent border-green-100' },
+            { step: 'Setup', label: 'My Profile & Rates', sub: 'Bank details & hourly rates', icon: '👤', to: '/profile', color: 'bg-orange-50 text-orange-700 border-orange-100' },
           ].map(a => (
             <button key={a.label} onClick={() => navigate(a.to)}
-              className={`flex items-center gap-3 p-4 rounded-xl border font-medium text-sm transition-all hover:shadow-md ${a.color}`}>
-              <span className="text-2xl">{a.icon}</span>
-              <span>{a.label}</span>
+              className={`flex items-start gap-3 p-4 rounded-xl border text-left transition-all hover:shadow-md ${a.color}`}>
+              <span className="text-2xl mt-0.5">{a.icon}</span>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider opacity-75">{a.step}</div>
+                <div className="font-semibold text-sm">{a.label}</div>
+                <div className="text-xs opacity-75 mt-0.5">{a.sub}</div>
+              </div>
             </button>
           ))}
         </div>
